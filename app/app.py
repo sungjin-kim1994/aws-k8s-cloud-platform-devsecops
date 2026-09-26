@@ -12,6 +12,7 @@ def home():
 
 @app.route('/health')
 def health():
+    # CI/CD 파이프라인 테스트용 주석 0927_0107
     return jsonify({"status": "healthy"})
 
 @app.route('/books')
