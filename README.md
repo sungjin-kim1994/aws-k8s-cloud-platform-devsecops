@@ -72,15 +72,15 @@ flowchart LR
 
 ### 4-1. CI — `.github/workflows/ci-cd.yml`
 
-| 순서 | 스텝 이름 | 사용 액션 / 명령 | 역할 |
-| --- | --- | --- | --- |
-| 1 | 코드 체크아웃 | `actions/checkout@v4` | 저장소 코드를 러너로 가져옴 |
-| 2 | GHCR 로그인 | `docker/login-action@v3` | `secrets.GITHUB_TOKEN`으로 인증 — 별도 PAT나 시크릿 등록 없이 잡 실행 동안만 유효한 토큰 사용 |
-| 3 | Docker Buildx 설정 | `docker/setup-buildx-action@v3` | 빌드 환경 준비 |
-| 4 | 이미지 빌드 및 푸시 | `docker/build-push-action@v5` | `app/`을 빌드해 `:SHA`, `:latest` 두 태그로 푸시 |
-| 5 | 취약점 스캔 (Trivy) | `aquasecurity/trivy-action@master` | CRITICAL/HIGH 취약점을 표로 리포트 (`exit-code: 0`, 리포트 전용) |
-| 6 | 매니페스트 이미지 태그 업데이트 | `sed` | `deployment.yaml`의 `image`를 SHA 태그로 교체 |
-| 7 | 변경된 매니페스트 커밋 및 푸시 | `git` | 변경이 있을 때만 `[skip ci]` 커밋 후 푸시 |
+| 순서 | 스텝 (사용 액션) | 역할 |
+| --- | --- | --- |
+| 1 | 코드 체크아웃<br>`actions/checkout@v4` | 저장소 코드를 러너로 가져옴 |
+| 2 | GHCR 로그인<br>`docker/login-action@v3` | `secrets.GITHUB_TOKEN`으로 인증 (별도 PAT 불필요) |
+| 3 | Buildx 설정<br>`docker/setup-buildx-action@v3` | 빌드 환경 준비 |
+| 4 | 이미지 빌드·푸시<br>`docker/build-push-action@v5` | `app/`을 빌드해 `:SHA`, `:latest`로 푸시 |
+| 5 | Trivy 스캔<br>`aquasecurity/trivy-action@master` | CRITICAL/HIGH 리포트 (`exit-code: 0`, 리포트 전용) |
+| 6 | 태그 갱신<br>`sed` | `deployment.yaml`의 이미지 태그를 SHA로 교체 |
+| 7 | 매니페스트 커밋·푸시<br>`git` | 변경 시에만 `[skip ci]` 커밋 후 푸시 |
 
 설계 포인트
 
