@@ -1,0 +1,12 @@
+# 키·인증 정보 — Never 커밋 금지 (.pem, .key인 모든 파일. EC2 접속 키 같은 것들이기에.)
+*.pem
+*.key
+.env
+
+# Python 캐시 (파이썬이 실행될 때 자동으로 생성되는 캐시로 코드가 아니기에 upload 필요 없음)
+__pycache__/
+*.pyc
+
+# Windows 자동 생성 파일 (Windows 탐색기가 폴더마다 몰래 만드는 파일)
+Thumbs.db
+desktop.ini
