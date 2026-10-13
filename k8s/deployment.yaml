@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: devsecops-app
-        image: ghcr.io/sungjin-kim1994/devsecops-app:72e6d5c30d3d8887bbbcae3d1e997b0c05251455
+        image: ghcr.io/sungjin-kim1994/devsecops-app:d08f6c31e2458c1224e94fad085a13a0bb509594
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
