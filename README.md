@@ -275,30 +275,6 @@ ssh -i <키 파일>.pem -L 8080:localhost:8080 ubuntu@<EC2 퍼블릭 IP>
 
 </details>
 
-<details>
-<summary><b>EC2 재시작 후 <code>kubectl</code>이 <code>no route to host</code></b></summary>
-
-- **원인**: EC2를 Stop/Start하면 Minikube 클러스터는 자동으로 다시 뜨지 않음
-- **해결**: `minikube status` 확인 후 `minikube start`
-
-</details>
-
-<details>
-<summary><b><code>curl localhost:30080</code> 실패</b></summary>
-
-- **원인**: Minikube(docker 드라이버)는 노드 자체가 별도 컨테이너라 NodePort가 EC2의 localhost가 아닌 노드 IP에 열림
-- **해결**: `curl $(minikube ip):30080`
-
-</details>
-
-<details>
-<summary><b>봇 커밋이 로컬 <code>git log</code>에 안 보임</b></summary>
-
-- **원인**: 봇은 GitHub에서 커밋하므로 로컬 브랜치가 원격보다 뒤처져 있음
-- **해결**: `git pull` (`fetch`는 원격 이력만 가져오고, `pull`은 로컬 브랜치에 병합까지 수행)
-
-</details>
-
 ---
 
 ## 한계와 개선 계획
@@ -307,16 +283,10 @@ ssh -i <키 파일>.pem -L 8080:localhost:8080 ubuntu@<EC2 퍼블릭 IP>
 | --- | --- |
 | Trivy가 결과만 보고함 (`exit-code: 0`) → CRITICAL이 나와도 검사가 실패하지 않음 | PR 검사에서 CRITICAL 발견 시 실패 처리 |
 | 직접 작성한 코드는 검사하지 않음 | Bandit(SAST) 추가 |
+| `main` 보호 규칙이 없어 PR 검사 결과와 상관없이 병합되고, 직접 push해도 그대로 배포됨 | PR 필수 + 검사 통과를 병합 조건으로 설정 (봇 커밋은 예외 허용 또는 매니페스트 저장소 분리) |
 | 서드파티 액션을 가변 참조로 사용 (`trivy-action@master`) | 액션을 전체 커밋 SHA로 고정 |
-| 브랜치 보호 규칙이 없어 PR 검사 결과와 상관없이 병합되고, `main`에 직접 push해도 그대로 배포됨 | PR 필수 + 검사 통과를 병합 조건으로 설정 (봇의 `main` 직접 커밋과 함께 정리 필요) |
-| 봇이 `main`에 직접 커밋 | 봇만 예외 허용 또는 매니페스트 전용 저장소 분리 |
-| 앱 변경 없이 워크플로우만 바꿔도 이미지를 새로 만들어 재배포 | 앱 변경 여부에 따라 배포 단계 실행 |
-| 컨테이너가 root로 실행 | 비root 사용자, `securityContext` 설정 |
 | 헬스체크·리소스 제한 없음 | `/health`에 probe 연결, requests/limits 지정 |
-| Flask 개발 서버로 실행 | gunicorn 등 WSGI 서버로 교체 |
-| 계정명이 파일에 고정 | `github.repository_owner` 등으로 변수화 |
-| EC2·보안 그룹을 콘솔에서 수동 구성 | Terraform으로 코드화 |
-| 단일 노드, 로그·메트릭 수집 없음 | 관리형 멀티 노드 클러스터, Prometheus·Grafana |
+| 로그·메트릭 수집 없음 | Prometheus·Grafana로 모니터링 구성 |
 
 <details>
 <summary>액션을 커밋 SHA로 고정해야 하는 이유</summary>
