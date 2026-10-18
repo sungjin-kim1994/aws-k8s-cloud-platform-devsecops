@@ -18,6 +18,20 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
+        # 응답 없으면 Service 분배 대상에서 제외 (격리)
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          periodSeconds: 5      # 5초마다 확인
+          failureThreshold: 3   # 3번 연속 실패 시 격리
+        # 계속 응답 없으면 컨테이너 재시작 (복구)
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          periodSeconds: 10     # 10초마다 확인
+          failureThreshold: 3   # 3번 연속 실패 시 재시작
 ---
 apiVersion: v1
 kind: Service
