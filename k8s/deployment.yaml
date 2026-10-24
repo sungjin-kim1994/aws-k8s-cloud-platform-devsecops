@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: devsecops-app
 spec:
-  replicas: 2
+  replica: 2
   selector:
     matchLabels:
       app: devsecops-app
