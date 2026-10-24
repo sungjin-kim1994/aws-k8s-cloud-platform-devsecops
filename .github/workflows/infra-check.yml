@@ -31,3 +31,47 @@ jobs:
       # Cluster 버전(v1.37.0) 규격으로 k8s/ 검사, 규격에 없는 필드도 실패 처리
       - name: Validate manifests
         run: ./kubeconform -strict -summary -kubernetes-version 1.37.0 k8s/
+
+  image-scan:
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_VERSION: 0.76.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Trivy 직접 설치 (ci-cd.yml과 같은 방식, 같은 버전)
+      - name: Trivy 설치
+        run: |
+          curl -fsSL -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
+          tar xzf trivy.tar.gz trivy
+          ./trivy --version
+
+      # k8s/ Manifest의 image 값만 뽑아서 목록 생성, 목록이 비면 실패 (검사 안 하고 통과 방지)
+      - name: Image 목록 추출
+        run: |
+          grep -rh 'image:' k8s/ | sed -E 's/.*image:[[:space:]]*//' | sort -u > images.txt
+          echo "검사할 Image 목록:"
+          cat images.txt
+          if [ ! -s images.txt ]; then
+            echo "Image를 찾지 못함 → 실패 처리"
+            exit 1
+          fi
+
+      # ① 탐지: Image마다 CRITICAL, HIGH 전체를 표로 출력 (실패 안 함)
+      - name: 취약점 탐지 (Trivy)
+        run: |
+          for img in $(cat images.txt); do
+            echo "===== $img ====="
+            ./trivy image --severity CRITICAL,HIGH --exit-code 0 "$img"
+          done
+
+      # ② 차단: 하나가 걸려도 멈추지 않고 전부 검사한 뒤, 하나라도 걸렸으면 마지막에 실패 처리
+      - name: 취약점 차단 (Trivy)
+        run: |
+          fail=0
+          for img in $(cat images.txt); do
+            echo "===== $img ====="
+            ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "$img" || fail=1
+          done
+          exit $fail
