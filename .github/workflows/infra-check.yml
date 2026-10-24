@@ -1,0 +1,33 @@
+name: Infra Check
+
+# 실행 조건: main에 Merge될 때(push), main으로 PR을 올릴 때(pull_request)
+# 단, k8s/ 폴더나 이 파일(infra-check.yml)이 바뀐 경우에만
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/infra-check.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/infra-check.yml'
+
+jobs:
+  kubeconform:
+    runs-on: ubuntu-latest
+    steps:
+      # 저장소 코드 내려받기 (v7.0.1 커밋 SHA로 고정)
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # kubeconform 설치 (버전 지정, latest 미사용)
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+
+      # Cluster 버전(v1.37.0) 규격으로 k8s/ 검사, 규격에 없는 필드도 실패 처리
+      - name: Validate manifests
+        run: ./kubeconform -strict -summary -kubernetes-version 1.37.0 k8s/
