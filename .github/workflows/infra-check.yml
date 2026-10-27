@@ -1,7 +1,10 @@
 name: Infra Check
 
+# Infra Check: k8s/ 설정 변경을 검사하는 Workflow
 # 실행 조건: main에 Merge될 때(push), main으로 PR을 올릴 때(pull_request)
-# 단, k8s/ 폴더나 이 파일(infra-check.yml)이 바뀐 경우에만
+#   AND k8s/ 폴더나 이 파일(infra-check.yml)이 바뀐 경우에만
+# ※ 예외: image-scan은 App Image(ghcr.io/sungjin-kim1994/devsecops-app)를 검사 대상에서 제외
+#   (App Image 검사는 ci-cd.yml 담당, 실행 조건과는 무관)
 on:
   push:
     branches: [main]
@@ -15,63 +18,84 @@ on:
       - '.github/workflows/infra-check.yml'
 
 jobs:
+  # [작업 1] kubeconform: Manifest가 Kubernetes 규격에 맞는지 검사
   kubeconform:
     runs-on: ubuntu-latest
     steps:
-      # 저장소 코드 내려받기 (v7.0.1 커밋 SHA로 고정)
+      # 저장소 코드 내려받기 (actions/checkout v7.0.1, 커밋 SHA로 고정)
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # kubeconform 설치 (버전 지정, latest 미사용)
+      # kubeconform 설치 (v0.8.0 버전 지정, latest 미사용)
       - name: Install kubeconform
         run: |
           curl -fsSL -o kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
           tar xzf kubeconform.tar.gz kubeconform
 
-      # Cluster 버전(v1.37.0) 규격으로 k8s/ 검사, 규격에 없는 필드도 실패 처리
+      # kubeconform으로 Cluster 버전(v1.37.0) 규격 기준 k8s/ 검사
+      # -strict: 규격에 없는 필드(오타 등)도 실패 처리
       - name: Validate manifests
         run: ./kubeconform -strict -summary -kubernetes-version 1.37.0 k8s/
 
+  # [작업 2] image-scan: k8s/에 적힌 외부 Image를 Trivy로 취약점 검사
   image-scan:
     runs-on: ubuntu-latest
     env:
       TRIVY_VERSION: 0.76.1
     steps:
+      # 저장소 코드 내려받기 (actions/checkout v7.0.1, 커밋 SHA로 고정)
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Trivy 직접 설치 (ci-cd.yml과 같은 방식, 같은 버전)
+      # Trivy 직접 설치 (curl, v0.76.1 버전 지정, ci-cd.yml과 같은 방식)
       - name: Trivy 설치
         run: |
           curl -fsSL -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
           tar xzf trivy.tar.gz trivy
           ./trivy --version
 
-      # k8s/ Manifest의 image 값만 뽑아서 목록 생성, 목록이 비면 실패 (검사 안 하고 통과 방지)
+      # k8s/에서 image: 값을 뽑아 목록 생성 → App Image는 ci-cd.yml 담당이라 제외
+      # 추출 자체가 0개면 실패 (추출 오류로 "검사 안 하고 통과" 방지)
       - name: Image 목록 추출
         run: |
-          grep -rh 'image:' k8s/ | sed -E 's/.*image:[[:space:]]*//' | sort -u > images.txt
-          echo "검사할 Image 목록:"
-          cat images.txt
-          if [ ! -s images.txt ]; then
-            echo "Image를 찾지 못함 → 실패 처리"
+          grep -rh 'image:' k8s/ | sed -E 's/.*image:[[:space:]]*//' | sort -u > all-images.txt
+          echo "k8s/에서 찾은 Image:"
+          cat all-images.txt
+          if [ ! -s all-images.txt ]; then
+            echo "Image를 하나도 찾지 못함 → 추출 오류로 보고 실패 처리"
             exit 1
           fi
+          grep -v '^ghcr.io/sungjin-kim1994/devsecops-app:' all-images.txt > images.txt || true
+          echo "검사 대상 (App Image는 ci-cd.yml에서 검사하므로 제외):"
+          if [ -s images.txt ]; then
+            cat images.txt
+          else
+            echo "검사할 Image 없음"
+          fi
 
-      # ① 탐지: Image마다 CRITICAL, HIGH 전체를 표로 출력 (실패 안 함)
+      # ① Trivy 탐지: Image마다 CRITICAL, HIGH 전체를 표로 출력 (실패 안 함)
       - name: 취약점 탐지 (Trivy)
         run: |
+          if [ ! -s images.txt ]; then
+            echo "검사할 Image 없음"
+            exit 0
+          fi
           for img in $(cat images.txt); do
             echo "===== $img ====="
             ./trivy image --severity CRITICAL,HIGH --exit-code 0 "$img"
           done
 
-      # ② 차단: 하나가 걸려도 멈추지 않고 전부 검사한 뒤, 하나라도 걸렸으면 마지막에 실패 처리
+      # ② Trivy 차단: CRITICAL + 수정 버전 있음(--ignore-unfixed)이면 실패
+      # 하나가 걸려도 멈추지 않고 전부 검사한 뒤, 걸린 Image를 모아서 마지막에 출력하고 실패 처리
       - name: 취약점 차단 (Trivy)
         run: |
-          fail=0
+          blocked=""
           for img in $(cat images.txt); do
             echo "===== $img ====="
-            ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "$img" || fail=1
+            ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "$img" || blocked="$blocked $img"
           done
-          exit $fail
+          if [ -n "$blocked" ]; then
+            echo "차단된 Image:$blocked"
+            exit 1
+          fi
+          echo "차단된 Image 없음"
