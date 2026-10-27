@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: devsecops-app
-        image: nginx:1.19
+        image: ghcr.io/sungjin-kim1994/devsecops-app:49bba0f725a19b1e15c8530765817fcff3ff9059
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
