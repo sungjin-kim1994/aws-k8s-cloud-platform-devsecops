@@ -18,9 +18,40 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      IMAGE: ghcr.io/sungjin-kim1994/devsecops-app
+      TRIVY_VERSION: 0.76.1
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      # PR, main 모두 먼저 Runner에만 저장 (GHCR 업로드는 검사 통과 후)
+      - name: 이미지 빌드
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          load: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+      # Trivy 직접 설치 (버전 지정)
+      - name: Trivy 설치
+        run: |
+          curl -fsSL -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
+          tar xzf trivy.tar.gz trivy
+          ./trivy --version
+
+      # ① 탐지: CRITICAL, HIGH 전체를 표로 출력 (실패 안 함)
+      - name: 취약점 탐지 (Trivy)
+        run: ./trivy image --severity CRITICAL,HIGH --exit-code 0 "${IMAGE}:${GITHUB_SHA}"
+
+      # ② 차단: CRITICAL + 수정 버전 있음 → 실패 처리 (이후 업로드, 봇 커밋 중단)
+      - name: 취약점 차단 (Trivy)
+        run: ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "${IMAGE}:${GITHUB_SHA}"
 
       - name: GHCR 로그인
         if: github.event_name == 'push'
@@ -30,26 +61,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker Buildx 설정
-        uses: docker/setup-buildx-action@v3
-
-      - name: 이미지 빌드 및 푸시
-        uses: docker/build-push-action@v5
-        with:
-          context: ./app
-          push: ${{ github.event_name == 'push' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: |
-            ghcr.io/sungjin-kim1994/devsecops-app:${{ github.sha }}
-            ghcr.io/sungjin-kim1994/devsecops-app:latest
-
-      - name: 취약점 스캔 (Trivy)
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ghcr.io/sungjin-kim1994/devsecops-app:${{ github.sha }}
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: 0
+      # 검사를 통과한 이미지만 업로드
+      - name: 이미지 업로드
+        if: github.event_name == 'push'
+        run: |
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
 
       - name: 매니페스트 이미지 태그 업데이트
         if: github.event_name == 'push'
