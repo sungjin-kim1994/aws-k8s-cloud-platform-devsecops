@@ -1,8 +1,9 @@
 name: Infra Check
 
-# Infra Check: k8s/ 설정 변경을 검사하는 Workflow
+# Infra Check: k8s/, monitoring/ 설정 변경을 검사하는 Workflow
 # 실행 조건: main에 Merge될 때(push), main으로 PR을 올릴 때(pull_request)
-#   AND k8s/ 폴더나 이 파일(infra-check.yml)이 바뀐 경우에만
+#   AND k8s/, monitoring/ 폴더나 이 파일(infra-check.yml)이 바뀐 경우에만
+# 검사 대상: k8s/의 Manifest + monitoring/ Chart로 만든 YAML (ArgoCD와 같은 조건으로 생성)
 # ※ 예외: image-scan은 App Image(ghcr.io/sungjin-kim1994/devsecops-app)를 검사 대상에서 제외
 #   (App Image 검사는 ci-cd.yml 담당, 실행 조건과는 무관)
 on:
@@ -10,12 +11,19 @@ on:
     branches: [main]
     paths:
       - 'k8s/**'
+      - 'monitoring/**'
       - '.github/workflows/infra-check.yml'
   pull_request:
     branches: [main]
     paths:
       - 'k8s/**'
+      - 'monitoring/**'
       - '.github/workflows/infra-check.yml'
+
+# 두 작업이 같이 쓰는 버전
+env:
+  HELM_VERSION: 4.2.1          # ArgoCD(v3.5.3) 안의 Helm과 같은 버전 (#14 할 일 1에서 확인)
+  KUBERNETES_VERSION: 1.37.0   # Cluster(Minikube) 버전
 
 jobs:
   # [작업 1] kubeconform: Manifest가 Kubernetes 규격에 맞는지 검사
@@ -32,12 +40,37 @@ jobs:
           curl -fsSL -o kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
           tar xzf kubeconform.tar.gz kubeconform
 
-      # kubeconform으로 Cluster 버전(v1.37.0) 규격 기준 k8s/ 검사
-      # -strict: 규격에 없는 필드(오타 등)도 실패 처리
-      - name: Validate manifests
-        run: ./kubeconform -strict -summary -kubernetes-version 1.37.0 k8s/
+      # Helm 설치 (HELM_VERSION 버전 지정, Runner에 기본 설치된 Helm 대신 ./helm 사용)
+      - name: Helm 설치
+        run: |
+          curl -fsSL -o helm.tar.gz https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz
+          tar xzf helm.tar.gz --strip-components=1 linux-amd64/helm
+          ./helm version
 
-  # [작업 2] image-scan: k8s/에 적힌 외부 Image를 Trivy로 취약점 검사
+      # monitoring/ Chart로 YAML 생성 (ArgoCD와 같은 조건: release 이름, namespace, CRD 포함, Cluster 버전)
+      # dependency build: Chart.yaml에 적힌 kube-prometheus-stack을 저장소에서 받음
+      - name: Chart YAML 생성
+        run: |
+          ./helm dependency build monitoring/
+          ./helm template monitoring monitoring/ \
+            --namespace monitoring \
+            --include-crds \
+            --kube-version "${KUBERNETES_VERSION}" \
+            > rendered.yaml
+          echo "생성한 리소스 종류:"
+          grep -h '^kind:' rendered.yaml | sort | uniq -c
+
+      # kubeconform으로 Cluster 버전 규격 기준 k8s/ + 생성한 YAML 검사
+      # -strict: 규격에 없는 필드(오타 등)도 실패 처리
+      # -skip: 스키마가 없는 CRD 기반 종류만 제외 (목록에 없는 새 종류는 실패 → 알아채고 추가 여부 결정)
+      #   -ignore-missing-schemas는 안 씀: apiVersion 오타(apps/v2 등)까지 통과시킴
+      - name: Validate manifests
+        run: |
+          ./kubeconform -strict -summary -kubernetes-version "${KUBERNETES_VERSION}" \
+            -skip CustomResourceDefinition,Prometheus,PrometheusRule,ServiceMonitor \
+            k8s/ rendered.yaml
+
+  # [작업 2] image-scan: k8s/와 생성한 YAML에 적힌 외부 Image를 Trivy로 취약점 검사
   image-scan:
     runs-on: ubuntu-latest
     env:
@@ -54,12 +87,35 @@ jobs:
           tar xzf trivy.tar.gz trivy
           ./trivy --version
 
-      # k8s/에서 image: 값을 뽑아 목록 생성 → App Image는 ci-cd.yml 담당이라 제외
+      # Helm 설치 (kubeconform 작업과 같음)
+      - name: Helm 설치
+        run: |
+          curl -fsSL -o helm.tar.gz https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz
+          tar xzf helm.tar.gz --strip-components=1 linux-amd64/helm
+          ./helm version
+
+      # monitoring/ Chart로 YAML 생성 (kubeconform 작업과 같음)
+      - name: Chart YAML 생성
+        run: |
+          ./helm dependency build monitoring/
+          ./helm template monitoring monitoring/ \
+            --namespace monitoring \
+            --include-crds \
+            --kube-version "${KUBERNETES_VERSION}" \
+            > rendered.yaml
+
+      # k8s/와 생성한 YAML에서 Image 목록 생성 → App Image는 ci-cd.yml 담당이라 제외
+      #   ① image: 값 (값이 없는 줄은 제외: CRD 안에 항목 이름으로만 있는 image:)
+      #   ② config-reloader: image:가 아니라 operator 인자(--prometheus-config-reloader=)로 전달되는 Image
+      #   따옴표, 줄 끝 공백 제거 → 정렬, 중복 제거
       # 추출 자체가 0개면 실패 (추출 오류로 "검사 안 하고 통과" 방지)
       - name: Image 목록 추출
         run: |
-          grep -rh 'image:' k8s/ | sed -E 's/.*image:[[:space:]]*//' | sort -u > all-images.txt
-          echo "k8s/에서 찾은 Image:"
+          {
+            grep -rhE 'image:[[:space:]]*[^[:space:]]' k8s/ rendered.yaml | sed -E 's/.*image:[[:space:]]*//' || true
+            grep -ohE -- '--prometheus-config-reloader=[^[:space:]"]+' rendered.yaml | sed 's/^--prometheus-config-reloader=//' || true
+          } | tr -d '"' | sed -E 's/[[:space:]]+$//' | sort -u > all-images.txt
+          echo "찾은 Image:"
           cat all-images.txt
           if [ ! -s all-images.txt ]; then
             echo "Image를 하나도 찾지 못함 → 추출 오류로 보고 실패 처리"
