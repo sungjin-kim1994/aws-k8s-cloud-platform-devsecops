@@ -143,12 +143,15 @@ jobs:
 
       # ② Trivy 차단: CRITICAL + 수정 버전 있음(--ignore-unfixed)이면 실패
       # 하나가 걸려도 멈추지 않고 전부 검사한 뒤, 걸린 Image를 모아서 마지막에 출력하고 실패 처리
+      # 예외: monitoring/.trivyignore에 적은 취약점은 차단에서 제외 (만료일이 지나면 다시 차단, 탐지 단계에는 계속 표시)
       - name: 취약점 차단 (Trivy)
         run: |
+          echo "적용 중인 예외 (monitoring/.trivyignore):"
+          grep -v -E '^[[:space:]]*(#|$)' monitoring/.trivyignore || echo "없음"
           blocked=""
           for img in $(cat images.txt); do
             echo "===== $img ====="
-            ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "$img" || blocked="$blocked $img"
+            ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --ignorefile monitoring/.trivyignore --exit-code 1 "$img" || blocked="$blocked $img"
           done
           if [ -n "$blocked" ]; then
             echo "차단된 Image:$blocked"
