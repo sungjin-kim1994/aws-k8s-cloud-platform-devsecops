@@ -1,0 +1,13 @@
+# monitoring: kube-prometheus-stack을 가져다 쓰는 Chart
+# 이 폴더에는 템플릿이 없고, 아래 dependencies의 Chart를 받아서 설치함
+# ArgoCD(Application monitoring)와 CI(infra-check.yml)가 이 폴더를 같은 방식으로 사용
+apiVersion: v2
+name: monitoring
+description: kube-prometheus-stack (Prometheus, Grafana) 설치용 Chart
+type: application
+version: 0.1.0   # 이 Chart(monitoring) 자체의 버전 (설치 대상 버전 아님)
+
+dependencies:
+  - name: kube-prometheus-stack                                    # 가져올 Chart 이름 (values.yaml 맨 위 키와 같아야 함)
+    version: 92.17.0                                               # 버전 고정 (할 일 1에서 결정)
+    repository: https://prometheus-community.github.io/helm-charts # 받아올 저장소 주소
