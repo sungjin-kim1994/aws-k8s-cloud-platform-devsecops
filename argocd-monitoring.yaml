@@ -1,0 +1,23 @@
+# ArgoCD Application: monitoring/ (kube-prometheus-stack)을 monitoring namespace에 설치
+# 최초 1회만 kubectl apply (argocd-app.yaml과 같은 부트스트랩), 이 파일을 바꾸면 다시 apply 필요
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring                 # 지시서 이름 (기존 devsecops-app과 구분)
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops.git
+    targetRevision: main
+    path: monitoring               # Chart.yaml이 있는 폴더 → ArgoCD가 Helm Chart로 인식
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring          # 설치할 namespace
+  syncPolicy:
+    automated:
+      prune: true                  # Git에서 지운 건 Cluster에서도 삭제 (기존과 같음)
+      selfHeal: true               # Cluster를 손으로 바꾸면 Git 상태로 되돌림 (기존과 같음)
+    syncOptions:
+      - CreateNamespace=true       # monitoring namespace가 없으면 생성
+      - ServerSideApply=true       # CRD가 커서 client-side apply의 annotation 크기 제한(262,144 bytes) 초과
