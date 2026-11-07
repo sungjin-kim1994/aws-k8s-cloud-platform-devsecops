@@ -16,3 +16,9 @@ kube-prometheus-stack:
     # test Pod 끔: ArgoCD는 Helm test를 배포하지 않음 → CI 검사 대상과 실제 배포 대상을 맞춤
     testFramework:
       enabled: false
+
+    # sidecar Image: Chart 기본값(2.14.1)의 certifi 취약점(GHSA-6q48-6c7w-9gw2) 때문에 새 버전으로 올림 (#16)
+    # Chart 기본값이 2.14.3 이상이 되면 이 설정은 지워도 됨
+    sidecar:
+      image:
+        tag: "2.14.3"

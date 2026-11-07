@@ -1,7 +1,9 @@
 # Trivy 예외 목록 (infra-check.yml의 차단 단계에서만 사용, 탐지 단계 로그에는 계속 표시)
 # 형식: 취약점 번호 exp:만료일 (만료일 00:00 UTC부터 다시 차단)
+# 예외를 추가할 때는 사유, 해제 조건, 이슈 번호를 같이 적음
 
+# [해제 11-07] sidecar 2.14.3으로 교체해서 더는 필요 없음 → 아래 예외 줄은 주석 처리 (#16)
 # Grafana sidecar(quay.io/kiwigrid/k8s-sidecar:2.14.1)의 certifi 2026.7.22, 2026.6.17
-# 사유: 수정된 sidecar Image가 없음, 우리 설정에서 certifi 목록을 쓰는 접속 없음 (#(새 이슈))
-# 해제: sidecar 새 버전(certifi 2026.10.19 이상 포함)으로 태그를 올리고 이 줄 삭제
-GHSA-6q48-6c7w-9gw2 exp:2026-11-16
+# 사유: 수정된 sidecar Image가 없음, 우리 설정에서 certifi 목록을 쓰는 접속 없음 (#16)
+# 해제 조건: sidecar 새 버전(certifi 2026.10.19 이상 포함)으로 태그를 올림
+# GHSA-6q48-6c7w-9gw2 exp:2026-11-16
