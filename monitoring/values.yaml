@@ -22,3 +22,13 @@ kube-prometheus-stack:
     sidecar:
       image:
         tag: "2.14.3"
+
+  # Minikube 제어부 지표 수집 제외: 지표 port가 127.0.0.1에만 열려 있어 Prometheus가 접속 못 함 (#19)
+  # 끄면 수집 대상, 경고 규칙, 제어부 대시보드가 함께 빠짐
+  # port를 여는 Minikube 옵션은 Cluster 초기화 위험이 있어 보류 (#18), EKS에서도 이 기본 방식은 안 씀
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
