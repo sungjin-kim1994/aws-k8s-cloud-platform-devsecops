@@ -32,6 +32,15 @@ spec:
             port: 5000
           periodSeconds: 10     # 10초마다 확인
           failureThreshold: 3   # 3번 연속 실패 시 재시작
+        # 리소스 요청, 상한: 스케줄러에 앱 크기를 알려줌, QoS BestEffort → Burstable (#21)
+        # 값은 측정값(메모리 최대 35MiB, CPU 약 0.6m, 접속 없을 때) 기준 초기값
+        resources:
+          requests:
+            memory: "64Mi"    # 실측 최대의 약 2배
+            cpu: "50m"        # 1000m = 1 core
+          limits:
+            memory: "128Mi"   # 넘으면 강제 종료 (OOMKilled)
+            cpu: "200m"       # 넘으면 느려짐 (throttling)
 ---
 apiVersion: v1
 kind: Service
