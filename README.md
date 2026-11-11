@@ -1,323 +1,271 @@
-# AWS · Kubernetes DevSecOps 파이프라인
+# AWS Kubernetes DevSecOps 파이프라인
 
-[![CI-CD Pipeline](https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/actions/workflows/ci-cd.yml)
+![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat&logo=kubernetes&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?style=flat&logo=githubactions&logoColor=white)
+![Trivy](https://img.shields.io/badge/Trivy-1904DA?style=flat)
+![Argo CD](https://img.shields.io/badge/Argo%20CD-EF7B4D?style=flat&logo=argo&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=flat&logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat&logo=grafana&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-000000?style=flat&logo=flask&logoColor=white)
+### PR 단계에서 이미지 빌드 및 취약점 스캔 진행 ▶ main 브랜치에 Merge되면 검사에 통과한 이미지만 upload ▶ ArgoCD가 자동으로 배포합니다.
 
-PR을 올리면 **이미지 빌드와 취약점 검사(Trivy)까지만** 실행하고, `main`에 병합되면 **이미지 업로드 → 배포 매니페스트 갱신 → ArgoCD 자동 배포**까지 사람 손 없이 이어지는 파이프라인입니다.
-AWS EC2 위 단일 노드 Kubernetes(Minikube)에 GitHub Actions(CI)와 ArgoCD(GitOps CD)를 연결했습니다.
+보안관제 직무에 종사하며 사후 대응뿐만 아니라 사전 운영의 중요성을 느껴, 직접 경험해 보고자 시작한 개인 프로젝트입니다.
 
-> 학습·포트폴리오용 환경입니다. 비용 관리를 위해 EC2는 평소 정지해 두므로 상시 접속 주소는 없습니다.
->
-> 파이프라인이 처음 끝까지 동작한 시점은 [`v0.1.0`][rel]으로 고정했고, 이후 변경은 Issue와 PR로 기록합니다.
+> 학습용 환경입니다. 비용 관리를 위해 EC2는 미사용 시 정지, 상시 접속 주소는 없습니다.
 
-![아키텍처: PR에서는 빌드·검사, main 병합 시 업로드·배포](docs/images/architecture.png)
+![아키텍처: PR은 빌드와 검사, main은 검사 통과 후 업로드와 배포](docs/images/architecture.png)
 
-## 현재 상태
-
-| 구분 | 내용 |
+| 영역 | 구성 |
 | --- | --- |
-| ✅ 동작 | PR: 빌드 + Trivy 검사만 실행 (이미지 업로드·배포 없음) |
-| ✅ 동작 | `main` 병합: GHCR 업로드 → 매니페스트 태그 갱신 커밋 → ArgoCD 자동 배포 |
-| ✅ 동작 | 이미지 태그 = 커밋 SHA → 실행 중인 파드가 어느 커밋인지 추적 가능 |
-| ⚠️ 한계 | Trivy는 결과만 보고 (`exit-code: 0`) → 취약점이 있어도 병합·배포가 막히지 않음 |
-| ⚠️ 한계 | 직접 작성한 코드는 검사하지 않음 (SAST 없음) |
+| 인프라 | AWS EC2 (t3.large, Ubuntu 24.04), Minikube (Kubernetes `v1.37.0`, containerd, Calico) |
+| CI | GitHub Actions 2개: App(`ci-cd.yml`), Infra(`infra-check.yml`) / Trivy, kubeconform |
+| CD | ArgoCD `v3.5.3` (GitOps, 자동 동기화, Self-Heal), GHCR |
+| 모니터링 | Prometheus, Grafana (kube-prometheus-stack, ArgoCD로 배포) |
+| 앱 | Flask API, replicas 2, readiness와 liveness probe, requests와 limits |
 
-## PR과 main에서 실행되는 범위
+## 파이프라인
 
-| 단계 | PR | main 병합 |
+### App: `ci-cd.yml`
+
+| 단계 | PR | `main` Merge |
 | --- | :---: | :---: |
-| 코드 체크아웃 · Buildx 설정 | ✅ | ✅ |
-| GHCR 로그인 | — | ✅ |
-| 이미지 빌드 | ✅ 러너에만 저장 | ✅ GHCR 업로드 |
-| Trivy 스캔 | ✅ 업로드 없이 검사 | ✅ 업로드 후 검사 |
-| 매니페스트 이미지 태그 갱신 | — | ✅ |
-| 봇 커밋 (→ ArgoCD가 감지해 배포) | — | ✅ |
+| 이미지 빌드 (Runner에만 저장) | ✅ | ✅ |
+| Trivy 탐지: CRITICAL, HIGH 전체 출력 (실패 안 함) | ✅ | ✅ |
+| **Trivy 차단: CRITICAL + 수정 버전 있음 → ❌** | ✅ | ✅ |
+| GHCR 업로드 (`:커밋SHA`) | — | ✅ |
+| Manifest 이미지 태그 갱신 → 봇 커밋 → ArgoCD 배포 | — | ✅ |
 
-- `main`에 병합(push)될 때만 돌아야 하는 단계에는 `if: github.event_name == 'push'` 조건을 걸었습니다.
-- 워크플로우는 `app/**` 또는 `.github/workflows/**`가 바뀔 때만 실행됩니다 (실행 경로 조건).
+- 차단에 걸리면 뒤 단계가 실행되지 않음 → 취약한 이미지는 GHCR에도, Cluster에도 가지 않음
+- 이미지 태그는 커밋 SHA → 실행 중인 Pod가 어느 커밋에서 나왔는지 바로 추적
+- 봇 커밋이 CI를 다시 돌리지 않는 이유: `k8s/`만 변경 + `[skip ci]` + `GITHUB_TOKEN`으로 한 push는 Workflow를 실행하지 않음
+
+### Infra: `infra-check.yml`
+
+| 작업 | 검사 대상 | 기준 |
+| --- | --- | --- |
+| `kubeconform` | `k8s/` + `monitoring/` Chart로 만든 YAML | Kubernetes `1.37.0` 규격, `-strict` (규격에 없는 필드도 실패) |
+| `image-scan` | 위 YAML에 적힌 외부 Image | App과 같은 차단 기준 |
+
+- Chart는 ArgoCD와 같은 조건(Helm 버전, release 이름, namespace)으로 YAML을 만든 뒤 검사 → 실제로 배포될 내용을 검사
+
+### 배포: ArgoCD
+
+| Application | 보는 곳 (`main`) | 설치 위치 |
+| --- | --- | --- |
+| `devsecops-app` | `k8s/` | `default` |
+| `monitoring` | `monitoring/` (Helm Chart) | `monitoring` |
+
+- Git과 Cluster가 다르면 자동 동기화, Cluster를 손으로 바꿔도 Git 상태로 되돌림 (Self-Heal)
+
+## 핵심 포인트 5개
+
+각 항목의 근거와 증적(캡처, 로그)은 연결된 Issue에 있습니다.
+
+### 1. 이미지 차단은 업로드 전에, 지금 고칠 수 있는 CRITICAL 한정 ([#12][i12])
+
+- **상황**: `v0.1.0`의 Trivy는 결과를 보고만 하고 배포를 막지 않았고, `main`에서는 업로드 뒤에 검사
+- **결정**: CRITICAL이면서 수정 버전이 있는 취약점만 차단, 검사 위치를 GHCR 업로드 앞으로 이동 (CRITICAL, HIGH 전체는 탐지 로그로 표시)
+- **근거**: 수정 버전이 없는 취약점까지 막으면 고칠 방법이 없는 채로 PR이 계속 막힘
+- **검증**: `Django==3.2.0`, `nginx:1.19`를 일부러 넣어 ❌ 확인 → `git revert`로 원복
+
+### 2. 각 PR이 자기 변경만 책임지도록 검사 범위 한정 ([PR #13 리뷰][c13])
+
+- **상황**: Infra 검사가 App Image까지 검사 → App 취약점 때문에 상관없는 Infra PR이 CI 실패로 막혔고, 그 PR 안에서는 고칠 수도 없었음
+- **결정**: App Image는 `ci-cd.yml`, 외부 Image는 `infra-check.yml`에서만 검사
+- **근거**: "무시해도 되는 CI 실패"가 반복되면 다음 실패도 무시하게 됨. 특히 Infra는 Merge되면 ArgoCD가 바로 배포해서 PR의 CI 실패가 유일한 관문
+
+### 3. 고칠 수 없는 취약점은 기한 있는 예외처리 및 이력관리 ([#16][i16])
+
+- **상황**: 모니터링 PR에서 Grafana sidecar Image의 CRITICAL 1건으로 차단 됨, 수정된 Image는 당일에 존재하지 않았음
+- **분석**: 그 취약점이 우리 설정에서 실제로 쓰이는 경로인지 소스 코드와 Chart 값으로 확인 → 쓰이지 않음으로 판단
+- **결정**: 그 취약점 1건만, 차단 단계에만, 14일 만료 예외 (탐지 로그에는 계속 표시)
+- **결과**: 수정 Image가 나오자 교체하고 만료 전에 예외 해제 → 현재 예외 0건
+
+### 4. 위험한 변경은 테스트 Cluster에서 먼저 ([#18][i18] → [#19][i19])
+
+- **상황**: 모니터링 설치 후 Target 3개 DOWN (원인: Minikube 제어부의 지표 port가 `127.0.0.1`에만 열려 있어 Prometheus가 접속 못 함)
+- **테스트**: port를 여는 옵션을 메인 Cluster에 바로 넣지 않고 테스트 Cluster 생성해서 진행 → Cluster가 초기화되는 것을 확인 (내부 data가 다 날아감)
+- **결정**: 옵션 변경 대신 3개를 수집 대상에서 제외 → Target DOWN 0개
+- **근거**: 초기화 위험이 있고, EKS에서는 제어부를 AWS가 운영해 이 방식을 어차피 쓰지 않음
+
+### 5. Action은 커밋 SHA로 고정 ([#23][i23])
+
+- **문제**: Action을 버전 태그(`@v4`)로 참조 → 태그는 가리키는 커밋이 바뀔 수 있음 (2026-03 [trivy-action 태그 덮어쓰기 공격][ghsa])
+- **결정**: 두 Workflow의 Action을 모두 커밋 SHA로 고정, `trivy-action`은 제거하고 Trivy를 버전 지정으로 직접 설치
+- **감수한 것**: 버전이 자동으로 올라가지 않음 → 1인 운영이라 수동 갱신, 규모가 커지면 Dependabot이나 Renovate로 자동화
 
 ## 작업 방식
 
-`v0.1.0` 이후 변경은 **Issue → 브랜치 → PR → 병합** 순서로 진행합니다.
+| 원칙 | 내용 |
+| --- | --- |
+| **Issue 및 PR 활용** | 사람이 하는 변경은 전부 Issue → 브랜치 → PR → Merge (Issue에 문제, 원인, 선택지, 할 일 기록) |
+| **작업 이력 및 결과 증적을 남김** | 할 일마다 캡처와 설명을 가능한 Issue 및 PR 댓글에 기록 (민감정보 유출 주의) |
+| **CI 결과❌면 Merge 금지** | 브랜치 보호 아직 미적용 상태로 주의 필요 |
+| **초기 구성 이후 변경은 Git으로만** | 앱, 모니터링 변경은 Git → ArgoCD로만 반영, 직접 실행하는 `kubectl`은 조회용만 |`kubectl`은 조회용만 (예외는 아래 4개) |
 
-- **Issue**: 문제 / 현재 아키텍처 / 왜 문제인지 / 해결방법 / 할 일
-- **브랜치**: `종류/이슈번호-요약` (예: `ci/3-pr-checks`)
-- **커밋**: Conventional Commits (`ci:`, `chore:`, `docs:` …)
-- **PR**: 변경 내용·영향 범위 작성 → 실행 결과를 코멘트로 검증 → 병합 (`Closes #번호`로 Issue 자동 종료)
-- **라벨**: `pipeline` `security` `environment` `troubleshooting` `documentation`
+<details>
+<summary><b>GitOps 밖에서 하는 초기 구성</b> (처음 1회, <code>v0.3.0</code>에서 Terraform으로 자동화할 대상)</summary>
+
+| 작업 | Git으로 못 하는 이유 |
+| --- | --- |
+| Minikube Cluster 생성 | ArgoCD가 돌아갈 Cluster가 먼저 있어야 함 |
+| ArgoCD 설치 | ArgoCD가 없는 상태에서는 ArgoCD로 설치할 수 없음 |
+| Application 2개 최초 등록 | 등록 전에는 ArgoCD가 이 저장소를 모름 |
+| Grafana 관리자 Secret 생성 | public 저장소라 비밀번호를 Git에 넣을 수 없음 |
+
+</details>
+
+<details>
+<summary><b>CI 실패 테스트 5건</b></summary>
+
+| 이슈 | 일부러 넣은 것 | 결과 | 원복 커밋 |
+| --- | --- | --- | --- |
+| [#10][i10] | `replicas` → `replica` (규격에 없는 필드) | kubeconform ❌ | [`e11a7f5`][e11a7f5] |
+| [#12][i12] | `requirements.txt`에 `Django==3.2.0` | App 차단 ❌ (수정 가능한 CRITICAL 6건) | [`db1f015`][db1f015] |
+| [#12][i12] | `k8s/` Image를 `nginx:1.19`로 | Infra 차단 ❌ (수정 가능한 CRITICAL 40건) | [`48a30d4`][48a30d4] |
+| [#14][i14] | Chart 설정에 `replicas: two` | kubeconform ❌ | [`b46c4bf`][b46c4bf] |
+| [#14][i14] | Grafana Image를 `9.0.0`으로 | Infra 차단 ❌ | [`f6a1c53`][f6a1c53] |
+
+</details>
+
+
 
 ## 작업 이력
 
 | 날짜 (KST) | 내용 | 기록 |
 | --- | --- | --- |
-| 2026-10-14 | PR에서 CI 검사(빌드·Trivy) 실행, 업로드·배포는 `main` 병합 시에만 | [#3][i3] · [#4][p4] |
-| 2026-10-06 | Git 기본 설정 파일 추가 (줄바꿈 LF 고정, 키·인증 파일 커밋 방지) | [#1][i1] · [#2][p2] |
-| 2026-10-06 | 초기 완성 시점(09-27)을 `v0.1.0` Release로 고정 | [v0.1.0][rel] |
-| 2026-09-25 ~ 27 | 초기 구축: 컨테이너화 → K8s 배포 → CI → Trivy·ArgoCD | 아래 토글 |
+| 2026-11-09 | Action 커밋 SHA 고정 | [#23][i23], [#24][p24] |
+| 2026-11-09 | 앱 Pod requests, limits 설정 → Grafana 사용률 No data 해결 | [#21][i21], [#22][p22] |
+| 2026-11-09 | 사전 테스트 후 Minikube 제어부 지표 수집 제외 → Target DOWN 0개 | [#18][i18], [#19][i19], [#20][p20] |
+| 2026-11-02 ~ 07 | sidecar CRITICAL 차단 → 만료일 예외 → 수정 Image로 교체 후 해제 | [#16][i16], [#17][p17] |
+| 2026-11-02 | Prometheus, Grafana 모니터링 (ArgoCD 배포, Chart도 CI 검사) | [#14][i14], [#15][p15] |
+| 2026-10-27 | Trivy 차단 적용 (App, Infra 두 경로), 업로드 전 검사 | [#12][i12], [#13][p13] |
+| 2026-10-25 | Infra CI 추가: kubeconform으로 Manifest 규격 검사 | [#10][i10], [#11][p11] |
+| 2026-10-19 | Cluster 재구축: 메모리 3GiB → 5GiB, CNI를 Calico로 (모니터링, NetworkPolicy 대비) | [#9][i9] |
+| 2026-10-19 | readiness, liveness probe 추가 | [#7][i7], [#8][p8] |
+| 2026-10-14 | PR에서 CI 검사, 업로드와 배포는 `main` Merge 시에만 | [#3][i3], [#4][p4] |
+| 2026-10-06 | Git 기본 설정: 키, 인증 파일 커밋 방지, 줄바꿈 LF 고정 | [#1][i1], [#2][p2] |
+| 2026-09-25 ~ 27 | 초기 구축: 컨테이너화 → Kubernetes 배포 → CI → ArgoCD | [v0.1.0][rel1] |
 
-<details>
-<summary>초기 구축 커밋 상세 (2026-09-25 ~ 09-27)</summary>
+## 버전별 변화와 다음 목표
 
-커밋 메시지의 `Day` 표기는 날짜가 아니라 작업 단계 이름입니다 (`Day3`·`Day4`는 같은 날).
+### v0.1.0 한계 → v0.2.0에서 해결
 
-| 커밋 시각 (KST) | 커밋 | 내용 |
-| --- | --- | --- |
-| 09-25 17:25 | [`a713d2f`][a713d2f] | Flask 앱 Docker 컨테이너화 |
-| 09-26 06:56 | [`07e1619`][07e1619] | Kubernetes 배포 (Deployment 2 replicas + NodePort Service) |
-| 09-27 00:53 | [`7f0336a`][7f0336a] | GitHub Actions 파이프라인 추가 (GHCR 빌드·푸시, 매니페스트 자동 갱신) |
-| 09-27 01:08 | [`481b7ea`][481b7ea] → [`3b94d9a`][3b94d9a] | 파이프라인 트리거 테스트 → 봇 이미지 태그 갱신 |
-| 09-27 03:19 | [`17a3a3d`][17a3a3d] | Trivy 스캔 스텝, ArgoCD Application 매니페스트 추가 |
-| 09-27 03:31 | [`72e6d5c`][72e6d5c] → [`72ecaf0`][72ecaf0] | Trivy 포함 end-to-end 확인 → 봇 이미지 태그 갱신 |
-| 09-27 06:37 ~ 07:07 | [`6c9ea74`][6c9ea74] ~ [`32f5322`][32f5322] | README 작성 (`v0.1.0` 기준 커밋) |
+| v0.1.0 한계 | v0.2.0 |
+| --- | --- |
+| Trivy가 결과만 보고하고 배포를 막지 못함 (업로드 뒤에 검사) | 업로드 전에 차단 ([#12][i12]) |
+| `trivy-action@master`처럼 바뀔 수 있는 참조로 Action 사용 | Trivy 버전 지정 설치, Action 커밋 SHA 고정 ([#12][i12], [#23][i23]) |
+| probe, requests, limits 없음 | readiness, liveness probe ([#7][i7]), requests, limits ([#21][i21]) |
+| Workflow만 바꾸면 CI가 실행되지 않음 | PR에서 CI 검사, Workflow 파일도 실행 조건에 포함 ([#3][i3]) |
+| 모니터링 없음 | Prometheus, Grafana ([#14][i14]) |
 
-</details>
+### v0.2.0 남은 한계 → v0.3.0 목표 후보
+
+| v0.2.0 남은 한계 | v0.3.0 목표 후보 |
+| --- | --- |
+| Minikube 단일 노드, EC2를 끄면 전부 멈춤 | EKS + Terraform, 필요할 때만 `apply`, `destroy` |
+| 초기 구성(Cluster, ArgoCD, Application 등록, Secret)과 EC2, 보안 그룹을 수동 생성 | Terraform으로 Cluster 생성부터 ArgoCD 설치, Application 등록까지 자동화 |
+| `main` 브랜치 보호 없음 (CI 실패여도 Merge 가능, 규칙으로 운영) | CI 봇의 `main` push 예외 방식 고민 및 결정 |
+| 장애 재현 미실시 (probe, 리소스 상한의 실제 동작 미확인) | EKS에서 장애 재현 |
+| 알림 없음 (Alertmanager 끔) | 알림 채널 연결 |
+| NetworkPolicy 미적용 (Calico로 적용 가능한 상태까지만) | namespace별 정책 적용 |
+| 컨테이너 root 실행 (v0.1.0부터 ~) | 비root 컨테이너 |
+| Flask 개발용 서버 사용 (v0.1.0부터 ~) | — |
+| 직접 작성한 코드 검사(SAST) 없음 | Bandit |
 
 ---
-
-## 상세
 
 <details>
 <summary><b>저장소 구조</b></summary>
 
 ```text
 .
-├── app/
-│   ├── app.py              # Flask API (/, /health, /books)
-│   ├── requirements.txt    # flask==3.0.0
-│   └── Dockerfile          # python:3.11-slim, 의존성 레이어를 먼저 복사해 빌드 캐시 활용
+├── app/                     # Flask API, Dockerfile
 ├── k8s/
-│   └── deployment.yaml     # Deployment(replicas 2) + Service(NodePort 30080), CI가 이미지 태그 갱신
+│   └── deployment.yaml      # Deployment + Service, CI가 이미지 태그 갱신
+├── monitoring/
+│   ├── Chart.yaml           # kube-prometheus-stack 버전 고정
+│   ├── values.yaml          # 기본값에서 바꾼 설정만
+│   └── .trivyignore         # Trivy 예외 목록 (만료일 포함, 현재 0건)
 ├── .github/workflows/
-│   └── ci-cd.yml           # CI: PR은 빌드·검사, main은 업로드·태그 갱신까지
-├── docs/images/            # README 그림
-├── argocd-app.yaml         # ArgoCD Application (최초 1회 kubectl apply)
-├── .gitattributes          # 텍스트 파일 줄바꿈을 LF로 고정
-└── .gitignore              # 키·인증 파일(*.pem, *.key, .env), 파이썬 캐시, Windows 자동 생성 파일 제외
+│   ├── ci-cd.yml            # App CI: 빌드 → Trivy 차단 → (main) 업로드, 태그 갱신
+│   └── infra-check.yml      # Infra CI: kubeconform + 외부 Image Trivy 차단
+├── argocd-app.yaml          # ArgoCD Application: k8s/ → default
+└── argocd-monitoring.yaml   # ArgoCD Application: monitoring/ → monitoring
 ```
-
-</details>
-
-<details>
-<summary><b>CI — <code>.github/workflows/ci-cd.yml</code></b></summary>
-
-| 순서 | 스텝 (사용 액션) | 역할 | 실행 |
-| --- | --- | --- | --- |
-| 1 | 코드 체크아웃<br>`actions/checkout@v4` | 저장소 코드를 러너로 가져옴 | PR · main |
-| 2 | GHCR 로그인<br>`docker/login-action@v3` | `GITHUB_TOKEN`으로 인증 (별도 PAT 불필요) | main |
-| 3 | Buildx 설정<br>`docker/setup-buildx-action@v3` | 빌드 환경 준비 | PR · main |
-| 4 | 이미지 빌드<br>`docker/build-push-action@v5` | PR: 러너에 저장 (`load`)<br>main: `:SHA`, `:latest`로 GHCR 업로드 (`push`) | PR · main |
-| 5 | Trivy 스캔<br>`aquasecurity/trivy-action@master` | CRITICAL/HIGH 보고 (`exit-code: 0`) | PR · main |
-| 6 | 태그 갱신<br>`sed` | `deployment.yaml`의 이미지 태그를 커밋 SHA로 교체 | main |
-| 7 | 매니페스트 커밋·푸시<br>`git` | 변경 시에만 `[skip ci]` 커밋 후 푸시 | main |
-
-설계 포인트
-
-- **PR에서 `load`를 쓰는 이유**: PR에서는 GHCR에 올리지 않으므로, Trivy가 검사할 이미지를 러너의 Docker에 남겨 둡니다.
-- **이미지 태그 전략**: 매니페스트에는 가변 태그 `latest` 대신 커밋 SHA 태그를 기록합니다. 실행 중인 이미지가 어느 커밋에서 나왔는지 바로 추적되고, 이전 SHA로 되돌리기도 쉽습니다.
-- **무한 루프 방지**: 봇 커밋은 `k8s/`만 바꾸므로 실행 경로 조건에 걸리지 않고, 메시지에 `[skip ci]`도 붙습니다. 여기에 `GITHUB_TOKEN`으로 만든 푸시는 새 워크플로우 실행을 만들지 않는 GitHub 동작까지 더해 세 겹으로 막혀 있습니다.
-- **권한 최소화**: 잡에는 `contents: write`(매니페스트 커밋)와 `packages: write`(GHCR 업로드)만 부여했습니다.
-- **빈 커밋 방지**: `git diff --staged --quiet || git commit ...` — 태그가 이미 같으면 커밋하지 않고, 스텝도 실패하지 않습니다.
-
-</details>
-
-<details>
-<summary><b>CD — <code>argocd-app.yaml</code></b></summary>
-
-| 설정 | 값 | 의미 |
-| --- | --- | --- |
-| `source` | 이 저장소 / `main` / `k8s` | 감시 대상: `main` 브랜치의 `k8s/` 디렉터리 |
-| `destination.server` | `https://kubernetes.default.svc` | ArgoCD가 설치된 같은 클러스터 |
-| `destination.namespace` | `default` | 배포 네임스페이스 |
-| `syncPolicy.automated` | 활성 | Git과 클러스터가 다르면 사람 승인 없이 동기화 |
-| `prune` | `true` | Git에서 지운 리소스는 클러스터에서도 삭제 |
-| `selfHeal` | `true` | 클러스터를 수동으로 바꿔도 Git 상태로 되돌림 |
-
-`argocd-app.yaml`은 부트스트랩용으로 최초 1회만 `kubectl apply` 합니다. 그 뒤 애플리케이션 배포는 `kubectl apply` 없이 Git 커밋만으로 반영됩니다.
-
-</details>
-
-<details>
-<summary><b>Kubernetes 리소스 — <code>k8s/deployment.yaml</code></b></summary>
-
-- **Deployment `devsecops-app`**: `replicas: 2`. 파드 하나가 죽어도 나머지가 요청을 처리하고, 이미지가 바뀌면 기본 RollingUpdate 전략으로 순차 교체합니다.
-- **`imagePullPolicy: Always`**: Kubernetes 배포 단계([`07e1619`][07e1619])에서는 Minikube 내부에서 직접 빌드한 로컬 이미지(`devsecops-app:v1`)를 쓰느라 `Never`였고, 이미지를 GHCR로 옮기면서([`7f0336a`][7f0336a]) `Always`로 바꿨습니다.
-- **Service `devsecops-app-service`**: NodePort `30080` → 컨테이너 포트 `5000`. Deployment와 같은 파일에 `---`로 구분해 두었습니다.
-
-</details>
-
-<details>
-<summary><b>보안 통제</b></summary>
-
-| 리스크 | 적용한 통제 |
-| --- | --- |
-| PR 단계 코드로 만든 이미지가 레지스트리·클러스터에 반영 | PR에서는 업로드·태그 갱신·봇 커밋 단계를 건너뜀 (`main` 직접 push는 아직 막지 않음) |
-| 알려진 취약점이 있는 패키지를 포함한 이미지 | 빌드마다 Trivy로 OS 패키지와 Python 의존성 스캔 (CRITICAL/HIGH) — 현재는 보고만 |
-| CI 자격증명 유출 | 장기 PAT 대신 실행마다 발급되는 `GITHUB_TOKEN`, 권한은 2개로 제한 |
-| 배포 이미지의 출처 불명확 | SHA 태그 + 봇 커밋 이력으로 언제·어떤 커밋의 이미지로 바뀌었는지 Git에 남음 |
-| 클러스터 수동 변경(drift) | ArgoCD `selfHeal`로 Git 상태 강제 |
-| 키·인증 파일이 실수로 커밋됨 | `.gitignore`로 `*.pem`, `*.key`, `.env` 제외 |
-| SSH 무차별 대입 | EC2 보안 그룹의 SSH(22) 소스를 본인 IP로 제한 |
-
-Trivy는 공개 취약점 DB(NVD, OS 벤더 보안 공지, GitHub Advisory 등)와 이미지 안 패키지 버전을 대조하는 정적 분석입니다. 보안관제에서 다루던 IPS/IDS처럼 행위나 트래픽을 보는 탐지가 아니라, 배포 전에 알려진 취약점을 걸러내는 예방 통제입니다. 런타임 탐지는 별도 계층이 필요합니다.
-
-</details>
-
-<details>
-<summary><b>동작 검증</b></summary>
-
-**엔드포인트**
-
-```bash
-curl http://$(minikube ip):30080/
-# {"message":"DevSecOps Platform - Book Search API","status":"running"}
-curl http://$(minikube ip):30080/health
-# {"status":"healthy"}
-curl http://$(minikube ip):30080/books
-```
-
-**1) 초기 구축 시점 (`v0.1.0`)** — 코드 push부터 파드 교체까지
-
-| 커밋 | 작성자 | 내용 |
-| --- | --- | --- |
-| [`72e6d5c`][72e6d5c] | sungjin-kim1994 | `app/app.py` 주석 수정 (CI 트리거용) |
-| [`72ecaf0`][72ecaf0] | github-actions[bot] | `k8s/deployment.yaml` 이미지 태그를 `72e6d5c…`로 갱신 |
-
-봇 커밋 이후 수동 `kubectl apply` 없이, 실행 중인 파드의 이미지가 해당 SHA 태그로 바뀐 것을 확인했습니다.
-
-```bash
-git pull && git log --oneline -3                 # 봇 커밋 72ecaf0 확인
-kubectl get pods -l app=devsecops-app \
-  -o jsonpath='{.items[*].spec.containers[*].image}'
-# ghcr.io/sungjin-kim1994/devsecops-app:72e6d5c30d3d8887bbbcae3d1e997b0c05251455
-```
-
-**2) PR / main 분리 적용 후** ([#4][p4])
-
-- **PR #4 실행** (`pull_request`): 빌드(`load`)와 Trivy만 실행, GHCR 로그인·태그 갱신·봇 커밋 3단계는 `skipped`
-- **병합 후 `main` 실행** (`push`): 병합 커밋 [`d08f6c3`][d08f6c3] → 같은 SHA 태그로 GHCR 업로드 → 봇 커밋 [`2ece9b6`][2ece9b6]이 `k8s/deployment.yaml` 태그를 `d08f6c3…`로 갱신
-- 실행 화면은 [PR #4][p4] 코멘트에 남겼습니다. 클러스터 반영(파드 이미지 교체)은 EC2를 다시 켠 뒤 확인할 예정입니다.
 
 </details>
 
 <details>
 <summary><b>재현 방법</b></summary>
 
-검증 환경: AWS EC2 t3.large (2 vCPU / 8 GiB, 메모리 여유를 위해 선택), Ubuntu 24.04, EBS 30 GiB, Docker · kubectl · Minikube 설치.
+검증 환경: AWS EC2 t3.large, Ubuntu 24.04 / 준비: Docker, kubectl, Minikube `v1.39.0`
 
 ```bash
 # 0) 저장소 받기
 git clone https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops.git
 cd aws-k8s-cloud-platform-devsecops
 
-# 1) 클러스터 시작
-minikube start --driver=docker
+# 1) Cluster 생성
+minikube start -p minikube-v2-5g-calico --driver=docker --container-runtime=containerd \
+  --kubernetes-version=v1.37.0 --cni=calico --memory=5g
+minikube profile minikube-v2-5g-calico
 
-# 2) ArgoCD 설치 (공식 문서 방식)
+# 2) ArgoCD 설치 (버전을 주소에 고정)
 kubectl create namespace argocd
 kubectl apply -n argocd --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-kubectl get pods -n argocd                        # 모든 파드가 Running인지 확인
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/install.yaml
 
-# 3) Application 등록 — 이후 배포는 ArgoCD가 수행
+# 3) Application 2개 등록, 이후 배포는 ArgoCD가 main 기준으로 진행
 kubectl apply -f argocd-app.yaml
-kubectl get application devsecops-app -n argocd   # SYNC STATUS: Synced / HEALTH STATUS: Healthy
+kubectl apply -f argocd-monitoring.yaml
 
-# 4) 확인
-kubectl get pods -l app=devsecops-app
-curl http://$(minikube ip):30080/health
+# 4) Grafana 관리자 Secret (비밀번호는 화면과 명령 기록에 남기지 않음)
+until kubectl get namespace monitoring >/dev/null 2>&1; do sleep 5; done
+kubectl create secret generic grafana-admin -n monitoring \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password="$(openssl rand -base64 24)"
+
+# 5) 확인
+kubectl get applications -n argocd                  # devsecops-app, monitoring: Synced, Healthy
+curl http://$(minikube ip):30080/health             # {"status":"healthy"}
 ```
 
-ArgoCD UI (선택) — 보안 그룹에 포트를 추가로 열지 않도록 SSH 터널로 접속합니다.
-
-```bash
-# EC2 안에서: 초기 admin 비밀번호 확인 후 포트 포워딩
-kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath="{.data.password}" | base64 -d; echo
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-
-# 내 PC에서: SSH 터널 연결 후 브라우저로 https://localhost:8080 (ID: admin)
-ssh -i <키 파일>.pem -L 8080:localhost:8080 ubuntu@<EC2 퍼블릭 IP>
-```
-
-포크해서 사용할 경우: `ci-cd.yml`, `k8s/deployment.yaml`, `argocd-app.yaml`에 계정명(`sungjin-kim1994`)이 고정되어 있어 본인 계정으로 바꿔야 합니다. GHCR 패키지는 Public으로 두거나, Private이면 클러스터에 `imagePullSecrets`를 설정해야 합니다.
+Grafana, ArgoCD 화면은 보안 그룹에 포트를 추가로 열지 않고 SSH 터널과 `kubectl port-forward`로 접속합니다.
 
 </details>
 
----
-
-## 트러블슈팅
-
-<details>
-<summary><b>ArgoCD 설치 시 annotation 크기 초과 (262,144 bytes)</b></summary>
-
-- **증상**: `metadata.annotations: Too long: may not be more than 262144 bytes`
-- **원인**: client-side apply는 적용한 매니페스트 전체를 `last-applied-configuration` 어노테이션에 저장하는데, ArgoCD CRD가 이 크기 제한을 넘음
-- **해결**: `--server-side`로 전환 — API 서버가 필드 단위로 소유권을 관리
-- **이어진 문제**: 재시도에서 필드 소유권 충돌 (첫 client-side 시도에서 일부 필드의 관리 주체가 이미 기록됨) → `--force-conflicts`로 해결. [공식 설치 문서][argo-doc]도 두 플래그를 함께 사용
-- **운영 환경이라면**: 강제 적용 전에 `managedFields`로 소유자 확인, `--dry-run=server`로 영향 확인, 한 리소스는 한 도구만 관리하도록 정리
-
-</details>
-
-<details>
-<summary><b>워크플로우 파일 push 거부 (<code>workflow</code> 스코프 없음)</b></summary>
-
-- **증상**: `refusing to allow a Personal Access Token to create or update workflow ... without workflow scope`
-- **원인**: `.github/workflows/` 파일을 푸시하려면 PAT에 `repo` 외에 `workflow` 스코프가 따로 필요
-- **해결**: 기존 classic PAT에 `workflow` 스코프 추가 (토큰 문자열은 그대로 유지됨)
-
-</details>
-
-<details>
-<summary><b>워크플로우 파일만 바꿔 push하면 Actions가 실행되지 않음</b> — #3에서 해결</summary>
-
-- **증상**: `ci-cd.yml`만 수정해 푸시했는데 Actions 실행 0건
-- **원인**: 실행 경로 조건이 `app/**`뿐이라 워크플로우 변경은 조건에 걸리지 않음 → CI 설정을 바꿔도 검증되지 않는 상태
-- **해결**: 실행 경로 조건에 `.github/workflows/**`를 추가하고 PR 트리거도 추가해, 병합 전에 PR에서 바로 확인 ([#3][i3])
-
-</details>
-
----
-
-## 한계와 개선 계획
-
-| 한계 | 개선 방향 |
-| --- | --- |
-| Trivy가 결과만 보고함 (`exit-code: 0`) → CRITICAL이 나와도 검사가 실패하지 않음 | PR 검사에서 CRITICAL 발견 시 실패 처리 |
-| 직접 작성한 코드는 검사하지 않음 | Bandit(SAST) 추가 |
-| `main` 보호 규칙이 없어 PR 검사 결과와 상관없이 병합되고, 직접 push해도 그대로 배포됨 | PR 필수 + 검사 통과를 병합 조건으로 설정 (봇 커밋은 예외 허용 또는 매니페스트 저장소 분리) |
-| 서드파티 액션을 가변 참조로 사용 (`trivy-action@master`) | 액션을 전체 커밋 SHA로 고정 |
-| 헬스체크·리소스 제한 없음 | `/health`에 probe 연결, requests/limits 지정 |
-| 로그·메트릭 수집 없음 | Prometheus·Grafana로 모니터링 구성 |
-
-<details>
-<summary>액션을 커밋 SHA로 고정해야 하는 이유</summary>
-
-2026년 3월 trivy-action의 버전 태그 76개가 악성 커밋으로 강제 푸시되어 CI 시크릿을 탈취한 [공급망 공격][ghsa]이 있었습니다 (이 프로젝트의 실행 시점은 이후라 해당 없음). 이 잡의 토큰은 저장소·패키지 쓰기 권한이 있어 같은 일이 생기면 영향이 큽니다. 태그나 브랜치는 다른 커밋으로 옮겨질 수 있지만 전체 커밋 SHA는 바뀌지 않으므로, 서드파티 액션은 SHA로 고정하고(예: trivy-action v0.36.0 → `ed142fd0673e97e23eac54620cfb913e5ce36c25`) Dependabot으로 갱신을 관리할 계획입니다.
-
-</details>
-
-## 배운 점
-
-- **에러 메시지를 원인 단위까지 따라가기**: `262144 bytes` 오류를 플래그 하나로 넘기지 않고, client-side apply가 설정을 어노테이션에 저장하는 방식 → server-side apply의 필드 소유권 모델까지 이해하고 나서 `--force-conflicts`의 의미와 운영 환경에서의 대안을 정리했습니다.
-- **"자동화됐다"를 증거로 확인하기**: 대시보드의 Synced 표시에서 멈추지 않고, 봇 커밋의 SHA와 실제 실행 중인 파드의 이미지 태그를 직접 대조했습니다.
-- **검사와 반영 나누기**: PR에서는 이미지를 러너에만 만들어 검사하고, 업로드와 매니페스트 커밋은 `main`에서만 하도록 나눠 PR 단계의 코드가 레지스트리나 클러스터에 닿지 않게 했습니다.
-- **보안 도구도 공급망의 일부**: 취약점 스캐너 액션을 가변 참조로 쓰는 것 자체가 위험이 될 수 있다는 점을 한계로 기록하고, SHA 고정을 개선 과제로 두었습니다.
-
-[rel]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/releases/tag/v0.1.0
-[i1]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/1
-[p2]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/2
+[rel1]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/releases/tag/v0.1.0
+[rel2]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/releases/tag/v0.2.0
 [i3]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/3
 [p4]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/4
+[i7]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/7
+[p8]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/8
+[i9]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/9
+[i10]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/10
+[p11]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/11
+[i12]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/12
+[p13]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/13
+[c13]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/13#issuecomment-6430323684
+[i14]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/14
+[p15]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/15
+[i16]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/16
+[p17]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/17
+[i18]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/18
+[i19]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/19
+[p20]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/20
+[i21]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/21
+[p22]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/22
+[i23]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/23
+[p24]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/24
 [ghsa]: https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23
-[argo-doc]: https://argo-cd.readthedocs.io/en/stable/getting_started/
-[a713d2f]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/a713d2f8c362ea8681bd1f9c10b533a43971c65b
-[07e1619]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/07e1619e70b46e35b37fc3ea885d65b8bfcd6f34
-[7f0336a]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/7f0336aab52e8c218e16643d2bbad7808d76da1c
-[481b7ea]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/481b7ea98f141af989cbf3b3c2d52f561281dddb
-[3b94d9a]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/3b94d9a8737b10d1dd8baaffe30b4ff357a846bf
-[17a3a3d]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/17a3a3dd67b38c138447a00d6377e31f2dab700c
-[72e6d5c]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/72e6d5c30d3d8887bbbcae3d1e997b0c05251455
-[72ecaf0]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/72ecaf00292dec9ce26c8a6a4f126a3eab3e35f5
-[6c9ea74]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/6c9ea7483046cf67724d6cb18bc1fd43f2d974c4
-[32f5322]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/32f5322bc1a8ada98dec1ef6bcaba18a7474c027
-[d08f6c3]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/d08f6c31e2458c1224e94fad085a13a0bb509594
-[2ece9b6]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/2ece9b6d5219cb8f3fe2a28e5bc303c6bf1ffb04
+[e11a7f5]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/e11a7f5e85cf2256ee7b30e320c2e182ad567ae0
+[db1f015]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/db1f0156679fb5637a0c73af960b3b7a807ea706
+[48a30d4]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/48a30d4fcfbc7cd753fc406a362bcfe225a175e3
+[b46c4bf]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/b46c4bf67e7d346a901d2e61c180c5cf454ab786
+[f6a1c53]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/commit/f6a1c532b3c5e051dc397d120c2d155984b104a6
+[i1]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/issues/1
+[p2]: https://github.com/sungjin-kim1994/aws-k8s-cloud-platform-devsecops/pull/2
